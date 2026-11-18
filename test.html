@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>5-Min Audio Match</title>
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #111827; color: #f9fafb; }
+    .card { background: #1f2937; padding: 2.5rem; border-radius: 16px; text-align: center; width: 360px; box-shadow: 0 10px 25px rgba(0,0,0,0.4); }
+    .timer { font-size: 3.5rem; font-weight: 700; font-variant-numeric: tabular-nums; margin: 1.2rem 0; color: #10b981; }
+    .timer.warning { color: #ef4444; }
+    .status { color: #9ca3af; margin-bottom: 1.5rem; min-height: 2.5em; font-size: 0.95rem; line-height: 1.4; }
+    button { display: block; width: 100%; box-sizing: border-box; padding: 0.9rem; font-size: 1rem; font-weight: 600; border: none; border-radius: 8px; cursor: pointer; transition: 0.2s; margin-top: 0.6rem; }
+    #startBtn { background: #3b82f6; color: white; }
+    #startBtn:hover { background: #2563eb; }
+    #muteBtn { background: #4b5563; color: white; display: none; }
+    #muteBtn.muted { background: #f59e0b; color: #111827; }
+    #stopBtn { background: #ef4444; color: white; display: none; }
+    #stopBtn:hover { background: #dc2626; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>5-Min Audio Match</h2>
+    <div id="status" class="status">Click below to start a 5-minute random voice chat</div>
+    <div id="timer" class="timer">05:00</div>
+    
+    <button id="startBtn" onclick="App.start()">Find Partner</button>
+    <button id="muteBtn" onclick="App.toggleMute()">Mute Mic</button>
+    <button id="stopBtn" onclick="App.stop('Session ended.')">End Call</button>
+    
+    <audio id="remoteAudio" autoplay></audio>
+  </div>
+
+  <script>
+    const API_URL = "https://script.google.com/macros/s/AKfycbx6V1XLJFYh9XjcFW9uJoc4BysZtmddm2xYQUGmro_90sk6JDMFAozynBHesOFJHLi2GA/exec";
+
+    const SessionTimer = {
+      DEFAULT_SECONDS: 300,
+      secondsLeft: 300,
+      interval: null,
+
+      start(onExpire) {
+        this.stop();
+        this.secondsLeft = this.DEFAULT_SECONDS;
+        this.render();
+        this.interval = setInterval(() => {
+          this.secondsLeft--;
+          this.render();
+          if (this.secondsLeft <= 0) {
+            this.stop();
+            onExpire();
+          }
+        }, 1000);
+      },
+
+      stop() {
+        clearInterval(this.interval);
+        this.interval = null;
+      },
+
+      reset() {
+        this.stop();
+        this.secondsLeft = this.DEFAULT_SECONDS;
+        this.render();
+      },
+
+      render() {
+        const mins = String(Math.floor(this.secondsLeft / 60)).padStart(2, '0');
+        const secs = String(this.secondsLeft % 60).padStart(2, '0');
+        const el = document.getElementById('timer');
+        el.textContent = `${mins}:${secs}`;
+        el.classList.toggle('warning', this.secondsLeft <= 30 && this.interval !== null);
+      }
+    };
+
+    const AudioEngine = {
+      peer: null,
+      myPeerId: null,
+      localStream: null,
+      currentCall: null,
+      isMuted: false,
+
+      async requestMic() {
+        this.localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        this.isMuted = false;
+      },
+
+      initPeer(onOpen, onIncomingCall) {
+        this.peer = new Peer();
+        this.peer.on('open', (id) => {
+          this.myPeerId = id;
+          onOpen(id);
+        });
+        this.peer.on('call', (incomingCall) => {
+          incomingCall.answer(this.localStream);
+          onIncomingCall(incomingCall);
+        });
+      },
+
+      callPartner(targetPeerId) {
+        return this.peer.call(targetPeerId, this.localStream);
+      },
+
+      toggleMute() {
+        if (!this.localStream) return false;
+        this.isMuted = !this.isMuted;
+        this.localStream.getAudioTracks().forEach(track => {
+          track.enabled = !this.isMuted;
+        });
+        return this.isMuted;
+      },
+
+      cleanup() {
+        if (this.currentCall) { this.currentCall.close(); this.currentCall = null; }
+        if (this.peer) { this.peer.destroy(); this.peer = null; }
+        if (this.localStream) {
+          this.localStream.getTracks().forEach(track => track.stop());
+          this.localStream = null;
+        }
+        this.myPeerId = null;
+        this.isMuted = false;
+      }
+    };
+
+    const App = {
+      pollInterval: null,
+
+      setStatus(text) {
+        document.getElementById('status').textContent = text;
+      },
+
+      async start() {
+        try {
+          this.setStatus('Requesting microphone...');
+          await AudioEngine.requestMic();
+        } catch (err) {
+          this.setStatus(`Microphone error (${err.name}): Please allow mic access.`);
+          return;
+        }
+
+        document.getElementById('startBtn').style.display = 'none';
+        document.getElementById('stopBtn').style.display = 'block';
+        this.setStatus('Connecting to audio network...');
+
+        AudioEngine.initPeer(
+          (id) => {
+            this.setStatus('Searching for an active partner...');
+            this.poll();
+            this.pollInterval = setInterval(() => this.poll(), 3000);
+          },
+          (incomingCall) => {
+            clearInterval(this.pollInterval);
+            this.bindCall(incomingCall);
+          }
+        );
+      },
+
+      async poll() {
+        if (!AudioEngine.myPeerId) return;
+        try {
+          const response = await fetch(`${API_URL}?action=find&peerId=${encodeURIComponent(AudioEngine.myPeerId)}`);
+          const data = await response.json();
+
+          if (data && data.status === 'matched') {
+            clearInterval(this.pollInterval);
+            this.setStatus('Partner found! Connecting audio...');
+            const outgoingCall = AudioEngine.callPartner(data.targetPeerId);
+            this.bindCall(outgoingCall);
+          }
+        } catch (err) {
+          console.error('Polling error:', err);
+        }
+      },
+
+      bindCall(call) {
+        AudioEngine.currentCall = call;
+
+        call.on('stream', (remoteStream) => {
+          document.getElementById('remoteAudio').srcObject = remoteStream;
+          document.getElementById('muteBtn').style.display = 'block';
+          this.setStatus('Connected! You have 5 minutes.');
+          SessionTimer.start(() => this.stop('Time is up! 5-minute session completed.'));
+        });
+
+        call.on('close', () => this.stop('Partner disconnected.'));
+        call.on('error', () => this.stop('Connection lost.'));
+      },
+
+      toggleMute() {
+        const muted = AudioEngine.toggleMute();
+        const btn = document.getElementById('muteBtn');
+        btn.textContent = muted ? 'Unmute Mic' : 'Mute Mic';
+        btn.classList.toggle('muted', muted);
+      },
+
+      stop(reason) {
+        clearInterval(this.pollInterval);
+        SessionTimer.reset();
+
+        if (AudioEngine.myPeerId) {
+          fetch(`${API_URL}?action=leave&peerId=${encodeURIComponent(AudioEngine.myPeerId)}`).catch(() => {});
+        }
+        AudioEngine.cleanup();
+
+        this.setStatus(reason);
+        document.getElementById('startBtn').style.display = 'block';
+        document.getElementById('muteBtn').style.display = 'none';
+        document.getElementById('muteBtn').textContent = 'Mute Mic';
+        document.getElementById('muteBtn').classList.remove('muted');
+        document.getElementById('stopBtn').style.display = 'none';
+      }
+    };
+  </script>
+</body>
+</html>
