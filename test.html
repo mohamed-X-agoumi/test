@@ -62,7 +62,7 @@
 
         if (selectedUrl) {
           player.src = selectedUrl;
-          player.load();
+          player.load(); // Forces the player to load the new source
           player.play().catch(err => console.log("Playback error:", err));
         }
       }
@@ -122,7 +122,7 @@
       },
 
       initPeer(onOpen, onIncomingCall) {
-        // Configuration avec les serveurs STUN publics pour traverser les pare-feux et routeurs différents
+        // Configuration STUN pour faciliter la connexion à travers différents réseaux/routeurs
         this.peer = new Peer({
           config: {
             iceServers: [
