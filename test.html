@@ -62,6 +62,7 @@
 
         if (selectedUrl) {
           player.src = selectedUrl;
+          player.load(); // Forces the player to load the new source
           player.play().catch(err => console.log("Playback error:", err));
         }
       }
