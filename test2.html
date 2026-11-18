@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>10-Min P2P Voice & Audio Lounge</title>
+  <!-- PeerJS for WebRTC Signaling -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --danger: #ef4444;
+      --success: #10b981;
+      --border: #334155;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 1.5rem;
+    }
+
+    .dashboard {
+      width: 100%;
+      max-width: 480px;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.75rem;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+    }
+
+    h1 { font-size: 1.25rem; font-weight: 700; margin-bottom: 0.25rem; }
+    h2 { font-size: 1rem; font-weight: 600; margin-bottom: 1rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    p.subtitle { color: var(--muted); font-size: 0.875rem; margin-bottom: 1.5rem; }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.35rem 0.75rem;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      background: #0f172a;
+      border: 1px solid var(--border);
+      margin-bottom: 1.25rem;
+    }
+
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .dot.searching { background: #f59e0b; animation: pulse 1.2s infinite; }
+    .dot.connected { background: var(--success); }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    .timer-display {
+      font-size: 3.5rem;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+      text-align: center;
+      margin: 1rem 0 1.5rem;
+      letter-spacing: -0.02em;
+    }
+
+    .controls { display: flex; gap: 0.75rem; }
+    button {
+      flex: 1;
+      padding: 0.85rem 1rem;
+      border: none;
+      border-radius: 10px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+    }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .btn-primary { background: var(--primary); color: white; }
+    .btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+    .btn-danger { background: var(--danger); color: white; }
+    .btn-secondary { background: #334155; color: var(--text); }
+    .btn-secondary.muted { background: #b45309; color: white; }
+
+    select {
+      width: 100%;
+      padding: 0.75rem;
+      border-radius: 10px;
+      background: #0f172a;
+      color: var(--text);
+      border: 1px solid var(--border);
+      font-size: 0.95rem;
+      margin-bottom: 1rem;
+    }
+
+    audio { width: 100%; height: 40px; border-radius: 8px; }
+  </style>
+</head>
+<body>
+
+  <main class="dashboard">
+    <!-- Feature 1: 10-Minute P2P Voice Matchmaker -->
+    <section class="card">
+      <h1>10-Minute Voice Match</h1>
+      <p class="subtitle">Direct browser-to-browser encrypted audio. Auto-disconnects at 10:00.</p>
+
+      <div class="status-badge">
+        <span id="statusDot" class="dot"></span>
+        <span id="statusText">Idle — Ready to match</span>
+      </div>
+
+      <div id="timer" class="timer-display">10:00</div>
+
+      <div class="controls">
+        <button id="findBtn" class="btn-primary">Find Partner</button>
+        <button id="muteBtn" class="btn-secondary" disabled>Mute Mic</button>
+        <button id="hangupBtn" class="btn-danger" disabled>End</button>
+      </div>
+
+      <!-- Hidden audio element for remote peer voice -->
+      <audio id="remoteAudio" autoplay playsinline></audio>
+    </section>
+
+    <!-- Feature 2: Embedded Audio Library -->
+    <section class="card">
+      <h2>Audio Library</h2>
+      <select id="trackSelect">
+        <option value="">-- Select a background track --</option>
+      </select>
+      <audio id="libraryPlayer" controls preload="metadata"></audio>
+    </section>
+  </main>
+
+  <script>
+    // ==========================================
+    // CONFIGURATION
+    // ==========================================
+    const GAS_ENDPOINT = "https://script.google.com/macros/s/AKfycbzu4MRyemWHlv8ZVjW_gigzfCM-uh8imSb5deeq-Za0MH5-2TnsrVJiUAY07z7gARsn/exec";
+    const SESSION_DURATION_SEC = 600; // 10 Minutes
+
+    // Add your /audios folder files here
+    const AUDIO_TRACKS = [
+      { title: "Lo-Fi Chill Beats", file: "./audios/lofi-chill.mp3" },
+      { title: "Rain & Thunder Ambience", file: "./audios/rain-ambience.mp3" },
+      { title: "Deep Focus Synth", file: "./audios/focus-beats.mp3" }
+    ];
+
+    // ==========================================
+    // STATE VARIABLES
+    // ==========================================
+    let peer = null;
+    let localStream = null;
+    let currentCall = null;
+    let pollInterval = null;
+    let countdownInterval = null;
+    let secondsRemaining = SESSION_DURATION_SEC;
+    let isMuted = false;
+
+    // ==========================================
+    // DOM ELEMENTS
+    // ==========================================
+    const findBtn = document.getElementById("findBtn");
+    const muteBtn = document.getElementById("muteBtn");
+    const hangupBtn = document.getElementById("hangupBtn");
+    const statusDot = document.getElementById("statusDot");
+    const statusText = document.getElementById("statusText");
+    const timerEl = document.getElementById("timer");
+    const remoteAudio = document.getElementById("remoteAudio");
+    const trackSelect = document.getElementById("trackSelect");
+    const libraryPlayer = document.getElementById("libraryPlayer");
+
+    // ==========================================
+    // AUDIO LIBRARY SETUP
+    // ==========================================
+    AUDIO_TRACKS.forEach(track => {
+      const opt = document.createElement("option");
+      opt.value = track.file;
+      opt.textContent = track.title;
+      trackSelect.appendChild(opt);
+    });
+
+    trackSelect.addEventListener("change", (e) => {
+      if (e.target.value) {
+        libraryPlayer.src = e.target.value;
+        libraryPlayer.play().catch(() => {});
+      } else {
+        libraryPlayer.pause();
+        libraryPlayer.removeAttribute("src");
+      }
+    });
+
+    // ==========================================
+    // MATCHMAKING & WEBRTC LOGIC
+    // ==========================================
+    function setStatus(state, text) {
+      statusDot.className = "dot " + state;
+      statusText.textContent = text;
+    }
+
+    function formatTime(sec) {
+      const m = Math.floor(sec / 60).toString().padStart(2, "0");
+      const s = (sec % 60).toString().padStart(2, "0");
+      return `${m}:${s}`;
+    }
+
+    function startCountdown() {
+      clearInterval(countdownInterval);
+      secondsRemaining = SESSION_DURATION_SEC;
+      timerEl.textContent = formatTime(secondsRemaining);
+
+      countdownInterval = setInterval(() => {
+        secondsRemaining--;
+        timerEl.textContent = formatTime(secondsRemaining);
+
+        if (secondsRemaining <= 0) {
+          endSession("10-minute session completed.");
+        }
+      }, 1000);
+    }
+
+    async function startMatchmaking() {
+      try {
+        findBtn.disabled = true;
+        setStatus("searching", "Requesting microphone...");
+
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+
+        setStatus("searching", "Initializing P2P node...");
+        peer = new Peer();
+
+        peer.on("open", (myPeerId) => {
+          setStatus("searching", "Searching for partner...");
+          hangupBtn.disabled = false;
+          pollQueue(myPeerId);
+        });
+
+        // Handle incoming call (when we were waiting in queue and someone matched us)
+        peer.on("call", (incomingCall) => {
+          clearInterval(pollInterval);
+          incomingCall.answer(localStream);
+          bindCallEvents(incomingCall);
+        });
+
+        peer.on("error", (err) => {
+          console.error("PeerJS error:", err);
+          endSession("Connection error. Please try again.");
+        });
+
+      } catch (err) {
+        console.error(err);
+        setStatus("", "Microphone permission denied.");
+        findBtn.disabled = false;
+      }
+    }
+
+    function pollQueue(myPeerId) {
+      const check = async () => {
+        try {
+          const url = `${GAS_ENDPOINT}?action=find&peerId=${encodeURIComponent(myPeerId)}`;
+          const res = await fetch(url);
+          const data = await res.json();
+
+          if (data.status === "matched") {
+            clearInterval(pollInterval);
+            if (data.initiator) {
+              setStatus("searching", "Partner found! Connecting...");
+              const outgoingCall = peer.call(data.partnerId, localStream);
+              bindCallEvents(outgoingCall);
+            } else {
+              setStatus("searching", "Partner found! Waiting for handshake...");
+            }
+          }
+        } catch (err) {
+          console.warn("Polling error, retrying...", err);
+        }
+      };
+
+      check();
+      pollInterval = setInterval(check, 2500);
+    }
+
+    function bindCallEvents(call) {
+      currentCall = call;
+
+      call.on("stream", (remoteStream) => {
+        remoteAudio.srcObject = remoteStream;
+        setStatus("connected", "Connected — Live P2P Audio");
+        muteBtn.disabled = false;
+        hangupBtn.disabled = false;
+        startCountdown();
+      });
+
+      call.on("close", () => {
+        endSession("Partner disconnected.");
+      });
+
+      call.on("error", () => {
+        endSession("Call dropped.");
+      });
+    }
+
+    function endSession(reason = "Session ended.") {
+      clearInterval(pollInterval);
+      clearInterval(countdownInterval);
+
+      if (peer && peer.id && !currentCall) {
+        // Notify queue to remove us if we cancelled while waiting
+        fetch(`${GAS_ENDPOINT}?action=cancel&peerId=${encodeURIComponent(peer.id)}`).catch(() => {});
+      }
+
+      if (currentCall) {
+        currentCall.close();
+        currentCall = null;
+      }
+
+      if (peer) {
+        peer.destroy();
+        peer = null;
+      }
+
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+        localStream = null;
+      }
+
+      remoteAudio.srcObject = null;
+      isMuted = false;
+      muteBtn.textContent = "Mute Mic";
+      muteBtn.classList.remove("muted");
+      muteBtn.disabled = true;
+      hangupBtn.disabled = true;
+      findBtn.disabled = false;
+      timerEl.textContent = formatTime(SESSION_DURATION_SEC);
+      setStatus("", reason);
+    }
+
+    // ==========================================
+    // BUTTON LISTENERS
+    // ==========================================
+    findBtn.addEventListener("click", startMatchmaking);
+
+    muteBtn.addEventListener("click", () => {
+      if (!localStream) return;
+      isMuted = !isMuted;
+      localStream.getAudioTracks().forEach(track => track.enabled = !isMuted);
+      muteBtn.textContent = isMuted ? "Unmute Mic" : "Mute Mic";
+      muteBtn.classList.toggle("muted", isMuted);
+    });
+
+    hangupBtn.addEventListener("click", () => endSession("You ended the call."));
+
+    // Clean up queue if user closes tab while searching
+    window.addEventListener("beforeunload", () => {
+      if (peer && peer.id && !currentCall) {
+        navigator.sendBeacon(`${GAS_ENDPOINT}?action=cancel&peerId=${encodeURIComponent(peer.id)}`);
+      }
+    });
+  </script>
+</body>
+</html>
