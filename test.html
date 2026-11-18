@@ -62,7 +62,7 @@
 
         if (selectedUrl) {
           player.src = selectedUrl;
-          player.load(); // Forces the player to load the new source
+          player.load();
           player.play().catch(err => console.log("Playback error:", err));
         }
       }
@@ -122,7 +122,17 @@
       },
 
       initPeer(onOpen, onIncomingCall) {
-        this.peer = new Peer();
+        // Configuration avec les serveurs STUN publics pour traverser les pare-feux et routeurs différents
+        this.peer = new Peer({
+          config: {
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' },
+              { urls: 'stun:stun2.l.google.com:19302' }
+            ]
+          }
+        });
+
         this.peer.on('open', (id) => {
           this.myPeerId = id;
           onOpen(id);
