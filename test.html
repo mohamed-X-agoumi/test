@@ -2,10 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>5-Min Audio Match</title>
+  <title>10-Min Audio Match</title>
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <style>
-    body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #111827; color: #f9fafb; }
+    body { font-family: system-ui, sans-serif; display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #111827; color: #f9fafb; padding: 2rem 0; }
     .card { background: #1f2937; padding: 2.5rem; border-radius: 16px; text-align: center; width: 360px; box-shadow: 0 10px 25px rgba(0,0,0,0.4); }
     .timer { font-size: 3.5rem; font-weight: 700; font-variant-numeric: tabular-nums; margin: 1.2rem 0; color: #10b981; }
     .timer.warning { color: #ef4444; }
@@ -20,10 +20,12 @@
   </style>
 </head>
 <body>
+
+  <!-- ==================== MAIN DASHBOARD CONTAINER (10-MIN MATCH) ==================== -->
   <div class="card">
-    <h2>5-Min Audio Match</h2>
-    <div id="status" class="status">Click below to start a 5-minute random voice chat</div>
-    <div id="timer" class="timer">05:00</div>
+    <h2>10-Min Audio Match</h2>
+    <div id="status" class="status">Click below to start a 10-minute random voice chat</div>
+    <div id="timer" class="timer">10:00</div>
     
     <button id="startBtn" onclick="App.start()">Find Partner</button>
     <button id="muteBtn" onclick="App.toggleMute()">Mute Mic</button>
@@ -32,12 +34,43 @@
     <audio id="remoteAudio" autoplay></audio>
   </div>
 
+  <!-- ==================== EMBEDDED AUDIO LIBRARY (SAME PAGE) ==================== -->
+  <div class="card" style="margin-top: 1.5rem;">
+    <h3 style="margin-top: 0; font-size: 1.1rem; color: #10b981;">GitHub Audio Library</h3>
+    <p style="color: #9ca3af; font-size: 0.85rem; margin-bottom: 1rem;">Select a track to listen to instantly on this page:</p>
+    
+    <!-- Dropdown to pick from your GitHub 'audios' folder -->
+    <select id="audioSelect" onchange="AudioLibrary.loadTrack()" style="width: 100%; padding: 0.7rem; border-radius: 6px; background: #374151; color: white; border: none; margin-bottom: 0.8rem; font-size: 0.9rem; cursor: pointer;">
+      <option value="" disabled selected>-- Choose an audio track --</option>
+      <option value="audios/track1.mp3">Track 1: Ambient Focus</option>
+      <option value="audios/track2.mp3">Track 2: Nature Sounds</option>
+    </select>
+
+    <!-- Native player staying right here on the page -->
+    <audio id="libraryAudio" controls style="width: 100%; height: 35px;"></audio>
+  </div>
+
   <script>
     const API_URL = "https://script.google.com/macros/s/AKfycbx6V1XLJFYh9XjcFW9uJoc4BysZtmddm2xYQUGmro_90sk6JDMFAozynBHesOFJHLi2GA/exec";
 
+    // ==================== MODULE: AUDIO LIBRARY ====================
+    const AudioLibrary = {
+      loadTrack() {
+        const select = document.getElementById('audioSelect');
+        const player = document.getElementById('libraryAudio');
+        const selectedUrl = select.value;
+
+        if (selectedUrl) {
+          player.src = selectedUrl;
+          player.play().catch(err => console.log("Playback error:", err));
+        }
+      }
+    };
+
+    // ==================== MODULE: SESSION TIMER (10 MINS) ====================
     const SessionTimer = {
-      DEFAULT_SECONDS: 300,
-      secondsLeft: 300,
+      DEFAULT_SECONDS: 600, // 10 minutes
+      secondsLeft: 600,
       interval: null,
 
       start(onExpire) {
@@ -74,6 +107,7 @@
       }
     };
 
+    // ==================== MODULE: AUDIO ENGINE ====================
     const AudioEngine = {
       peer: null,
       myPeerId: null,
@@ -123,6 +157,7 @@
       }
     };
 
+    // ==================== MODULE: MAIN CONTROLLER ====================
     const App = {
       pollInterval: null,
 
@@ -179,8 +214,8 @@
         call.on('stream', (remoteStream) => {
           document.getElementById('remoteAudio').srcObject = remoteStream;
           document.getElementById('muteBtn').style.display = 'block';
-          this.setStatus('Connected! You have 5 minutes.');
-          SessionTimer.start(() => this.stop('Time is up! 5-minute session completed.'));
+          this.setStatus('Connected! You have 10 minutes.');
+          SessionTimer.start(() => this.stop('Time is up! 10-minute session completed.'));
         });
 
         call.on('close', () => this.stop('Partner disconnected.'));
