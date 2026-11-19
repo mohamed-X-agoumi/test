@@ -159,8 +159,6 @@
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' }
-        // Add your free TURN credentials here if experiencing strict corporate/mobile symmetric NAT blocks:
-        // { urls: 'turn:YOUR_TURN_SERVER', username: '...', credential: '...' }
       ]
     };
 
@@ -277,10 +275,8 @@
             setupPeerConnection();
 
             if (data.role === 'callee') {
-              // Wait for signals from the caller
               startSignalPolling();
             } else {
-              // I am the caller (initiator): create WebRTC Offer
               startSignalPolling();
               createAndSendOffer();
             }
@@ -297,12 +293,10 @@
     function setupPeerConnection() {
       peerConnection = new RTCPeerConnection(RTC_CONFIG);
 
-      // Add local microphone tracks to connection
       localStream.getTracks().forEach(track => {
         peerConnection.addTrack(track, localStream);
       });
 
-      // Receive remote audio stream from peer
       peerConnection.ontrack = (event) => {
         remoteAudio.srcObject = event.streams[0];
         setStatus("connected", "Connected — Live P2P Audio");
@@ -311,7 +305,6 @@
         startCountdown();
       };
 
-      // Collect ICE candidates and send them to partner via Apps Script
       peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
           sendSignal({ type: 'ice', candidate: event.candidate });
@@ -392,7 +385,6 @@
       clearInterval(countdownInterval);
 
       if (!partnerId) {
-        // Cancel waiting in queue if we haven't matched yet
         fetch(`${GAS_ENDPOINT}?action=cancel&peerId=${encodeURIComponent(myPeerId)}`).catch(() => {});
       }
 
@@ -418,9 +410,6 @@
       setStatus("", reason);
     }
 
-    // ==========================================
-    // BUTTON LISTENERS
-    // ==========================================
     findBtn.addEventListener("click", startMatchmaking);
 
     muteBtn.addEventListener("click", () => {
@@ -433,7 +422,6 @@
 
     hangupBtn.addEventListener("click", () => endSession("You ended the call."));
 
-    // Clean up queue if user closes tab while searching
     window.addEventListener("beforeunload", () => {
       if (!partnerId) {
         navigator.sendBeacon(`${GAS_ENDPOINT}?action=cancel&peerId=${encodeURIComponent(myPeerId)}`);
