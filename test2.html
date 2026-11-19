@@ -336,8 +336,16 @@
     }
 
     function sendSignal(payload) {
-      fetch(`${GAS_ENDPOINT}?action=send_signal&peerId=${encodeURIComponent(myPeerId)}&targetId=${encodeURIComponent(partnerId)}&payload=${encodeURIComponent(JSON.stringify(payload))}`)
-        .catch(err => console.warn("Signal send failed", err));
+      fetch(GAS_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'send_signal',
+          peerId: myPeerId,
+          targetId: partnerId,
+          payload: payload
+        })
+      }).catch(err => console.warn("Signal send failed", err));
     }
 
     function startSignalPolling() {
