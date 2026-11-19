@@ -4,8 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>10-Min P2P Voice & Audio Lounge</title>
-  <!-- PeerJS for WebRTC Signaling -->
-  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <style>
     :root {
       --bg: #0f172a;
@@ -156,7 +154,16 @@
     const GAS_ENDPOINT = "https://script.google.com/macros/s/AKfycbzu4MRyemWHlv8ZVjW_gigzfCM-uh8imSb5deeq-Za0MH5-2TnsrVJiUAY07z7gARsn/exec";
     const SESSION_DURATION_SEC = 600; // 10 Minutes
 
-    // Add your /audios folder files here
+    // STUN / TURN Server configuration for NAT traversal
+    const RTC_CONFIG = {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' }
+        // Add your free TURN credentials here if experiencing strict corporate/mobile symmetric NAT blocks:
+        // { urls: 'turn:YOUR_TURN_SERVER', username: '...', credential: '...' }
+      ]
+    };
+
     const AUDIO_TRACKS = [
       { title: "track1", file: "./audios/j1.mp3" },
       { title: "track2", file: "./audios/jamil.mp3" }
@@ -165,10 +172,12 @@
     // ==========================================
     // STATE VARIABLES
     // ==========================================
-    let peer = null;
+    let myPeerId = 'user_' + Math.random().toString(36).substring(2, 11);
+    let partnerId = null;
     let localStream = null;
-    let currentCall = null;
+    let peerConnection = null;
     let pollInterval = null;
+    let signalPollInterval = null;
     let countdownInterval = null;
     let secondsRemaining = SESSION_DURATION_SEC;
     let isMuted = false;
@@ -207,7 +216,7 @@
     });
 
     // ==========================================
-    // MATCHMAKING & WEBRTC LOGIC
+    // MATCHMAKING & NATIVE WebRTC LOGIC
     // ==========================================
     function setStatus(state, text) {
       statusDot.className = "dot " + state;
@@ -242,26 +251,9 @@
 
         localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
 
-        setStatus("searching", "Initializing P2P node...");
-        peer = new Peer();
-
-        peer.on("open", (myPeerId) => {
-          setStatus("searching", "Searching for partner...");
-          hangupBtn.disabled = false;
-          pollQueue(myPeerId);
-        });
-
-        // Handle incoming call (when we were waiting in queue and someone matched us)
-        peer.on("call", (incomingCall) => {
-          clearInterval(pollInterval);
-          incomingCall.answer(localStream);
-          bindCallEvents(incomingCall);
-        });
-
-        peer.on("error", (err) => {
-          console.error("PeerJS error:", err);
-          endSession("Connection error. Please try again.");
-        });
+        setStatus("searching", "Searching for partner...");
+        hangupBtn.disabled = false;
+        pollQueue();
 
       } catch (err) {
         console.error(err);
@@ -270,7 +262,7 @@
       }
     }
 
-    function pollQueue(myPeerId) {
+    function pollQueue() {
       const check = async () => {
         try {
           const url = `${GAS_ENDPOINT}?action=find&peerId=${encodeURIComponent(myPeerId)}`;
@@ -279,16 +271,22 @@
 
           if (data.status === "matched") {
             clearInterval(pollInterval);
-            if (data.initiator) {
-              setStatus("searching", "Partner found! Connecting...");
-              const outgoingCall = peer.call(data.partnerId, localStream);
-              bindCallEvents(outgoingCall);
+            partnerId = data.partnerId;
+            setStatus("searching", "Partner found! Connecting...");
+
+            setupPeerConnection();
+
+            if (data.role === 'callee') {
+              // Wait for signals from the caller
+              startSignalPolling();
             } else {
-              setStatus("searching", "Partner found! Waiting for handshake...");
+              // I am the caller (initiator): create WebRTC Offer
+              startSignalPolling();
+              createAndSendOffer();
             }
           }
         } catch (err) {
-          console.warn("Polling error, retrying...", err);
+          console.warn("Queue polling error, retrying...", err);
         }
       };
 
@@ -296,43 +294,103 @@
       pollInterval = setInterval(check, 2500);
     }
 
-    function bindCallEvents(call) {
-      currentCall = call;
+    function setupPeerConnection() {
+      peerConnection = new RTCPeerConnection(RTC_CONFIG);
 
-      call.on("stream", (remoteStream) => {
-        remoteAudio.srcObject = remoteStream;
+      // Add local microphone tracks to connection
+      localStream.getTracks().forEach(track => {
+        peerConnection.addTrack(track, localStream);
+      });
+
+      // Receive remote audio stream from peer
+      peerConnection.ontrack = (event) => {
+        remoteAudio.srcObject = event.streams[0];
         setStatus("connected", "Connected — Live P2P Audio");
         muteBtn.disabled = false;
         hangupBtn.disabled = false;
         startCountdown();
-      });
+      };
 
-      call.on("close", () => {
-        endSession("Partner disconnected.");
-      });
+      // Collect ICE candidates and send them to partner via Apps Script
+      peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+          sendSignal({ type: 'ice', candidate: event.candidate });
+        }
+      };
 
-      call.on("error", () => {
-        endSession("Call dropped.");
-      });
+      peerConnection.onconnectionstatechange = () => {
+        if (peerConnection.connectionState === 'disconnected' || peerConnection.connectionState === 'failed') {
+          endSession("Partner disconnected.");
+        }
+      };
+    }
+
+    async function createAndSendOffer() {
+      try {
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        sendSignal({ type: 'offer', sdp: peerConnection.localDescription });
+      } catch (err) {
+        console.error("Error creating offer:", err);
+      }
+    }
+
+    function sendSignal(payload) {
+      fetch(`${GAS_ENDPOINT}?action=send_signal&peerId=${encodeURIComponent(myPeerId)}&targetId=${encodeURIComponent(partnerId)}&payload=${encodeURIComponent(JSON.stringify(payload))}`)
+        .catch(err => console.warn("Signal send failed", err));
+    }
+
+    function startSignalPolling() {
+      clearInterval(signalPollInterval);
+      signalPollInterval = setInterval(async () => {
+        try {
+          const res = await fetch(`${GAS_ENDPOINT}?action=poll_signals&peerId=${encodeURIComponent(myPeerId)}`);
+          const data = await res.json();
+
+          if (data.status === "success" && data.messages) {
+            for (const msg of data.messages) {
+              const payload = JSON.parse(msg.payload);
+              handleIncomingSignal(payload);
+            }
+          }
+        } catch (err) {
+          console.warn("Signal poll error", err);
+        }
+      }, 1500);
+    }
+
+    async function handleIncomingSignal(payload) {
+      if (!peerConnection) return;
+
+      try {
+        if (payload.type === 'offer') {
+          await peerConnection.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+          const answer = await peerConnection.createAnswer();
+          await peerConnection.setLocalDescription(answer);
+          sendSignal({ type: 'answer', sdp: peerConnection.localDescription });
+        } else if (payload.type === 'answer') {
+          await peerConnection.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+        } else if (payload.type === 'ice') {
+          await peerConnection.addIceCandidate(new RTCIceCandidate(payload.candidate));
+        }
+      } catch (err) {
+        console.error("Error handling signal:", err);
+      }
     }
 
     function endSession(reason = "Session ended.") {
       clearInterval(pollInterval);
+      clearInterval(signalPollInterval);
       clearInterval(countdownInterval);
 
-      if (peer && peer.id && !currentCall) {
-        // Notify queue to remove us if we cancelled while waiting
-        fetch(`${GAS_ENDPOINT}?action=cancel&peerId=${encodeURIComponent(peer.id)}`).catch(() => {});
+      if (!partnerId) {
+        // Cancel waiting in queue if we haven't matched yet
+        fetch(`${GAS_ENDPOINT}?action=cancel&peerId=${encodeURIComponent(myPeerId)}`).catch(() => {});
       }
 
-      if (currentCall) {
-        currentCall.close();
-        currentCall = null;
-      }
-
-      if (peer) {
-        peer.destroy();
-        peer = null;
+      if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
       }
 
       if (localStream) {
@@ -340,6 +398,7 @@
         localStream = null;
       }
 
+      partnerId = null;
       remoteAudio.srcObject = null;
       isMuted = false;
       muteBtn.textContent = "Mute Mic";
@@ -368,8 +427,8 @@
 
     // Clean up queue if user closes tab while searching
     window.addEventListener("beforeunload", () => {
-      if (peer && peer.id && !currentCall) {
-        navigator.sendBeacon(`${GAS_ENDPOINT}?action=cancel&peerId=${encodeURIComponent(peer.id)}`);
+      if (!partnerId) {
+        navigator.sendBeacon(`${GAS_ENDPOINT}?action=cancel&peerId=${encodeURIComponent(myPeerId)}`);
       }
     });
   </script>
